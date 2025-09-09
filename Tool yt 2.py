@@ -3,38 +3,44 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 
-# YouTube API Key
+# ==============================
+# YouTube API Setup
+# ==============================
 API_KEY = "AIzaSyCW4Pj5h4SIId6v0yTJr9SaG9Wljwnvmms"
-
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_VIDEO_URL = "https://www.googleapis.com/youtube/v3/videos"
 YOUTUBE_CHANNEL_URL = "https://www.googleapis.com/youtube/v3/channels"
 
-# Streamlit App Title
+# ==============================
+# Streamlit UI
+# ==============================
 st.title("YouTube Viral Topics Tool")
 
 # Input Fields
 days = st.number_input("Enter Days to Search (1-30):", min_value=1, max_value=30, value=5)
-region = st.text_input("Enter Region Code (e.g., US, IN, PK):", value="US")
-video_type = st.radio("Select Video Type:", ["All", "Shorts (<60s)", "Long (60s+)"])
-min_views = st.number_input("Minimum Views Filter:", min_value=0, value=1000)
 
-# Keywords
+# List of broader + new keywords
 keywords = [
+    # Old keywords
     "Affair Relationship Stories", "Reddit Update", "Reddit Relationship Advice", "Reddit Relationship",
     "Reddit Cheating", "AITA Update", "Open Marriage", "Open Relationship", "X BF Caught",
     "Stories Cheat", "X GF Reddit", "AskReddit Surviving Infidelity", "GurlCan Reddit",
     "Cheating Story Actually Happened", "Cheating Story Real", "True Cheating Story",
     "Reddit Cheating Story", "R/Surviving Infidelity", "Surviving Infidelity",
-    "Reddit Marriage", "Wife Cheated I Can't Forgive", "Reddit AP", "Exposed Wife", "Cheat Exposed",
-    "Human evolution in under 60s", "history facts that are actually completely wrong",
-    "disturbing mythical creatures you're never heard of", "the deadliest weapons of every time period",
+    "Reddit Marriage", "Wife Cheated I Can't Forgive", "Reddit AP", "Exposed Wife",
+    "Cheat Exposed",
+
+    # New keywords
+    "Human evolution in under 60s", "History facts that are actually completely wrong",
+    "Disturbing mythical creatures you're never heard of", "The deadliest weapons of every time period",
     "Sketch animated explainer about history", "True crime", "25 cracked cold case to sleep to",
-    "25 murder case with shocking plot", "boring history", "boring history sleep",
-    "Automotive", "Havey vehicles"
+    "25 murder case with shocking plot", "Boring history", "Boring history sleep",
+    "Automotive", "Heavy vehicles"
 ]
 
-# Fetch Data Button
+# ==============================
+# Fetch Data
+# ==============================
 if st.button("Fetch Data"):
     try:
         start_date = (datetime.utcnow() - timedelta(days=int(days))).isoformat("T") + "Z"
@@ -49,8 +55,7 @@ if st.button("Fetch Data"):
                 "type": "video",
                 "order": "viewCount",
                 "publishedAfter": start_date,
-                "maxResults": 10,
-                "regionCode": region,
+                "maxResults": 5,
                 "key": API_KEY,
             }
 
@@ -61,49 +66,46 @@ if st.button("Fetch Data"):
                 continue
 
             videos = data["items"]
-            video_ids = [v["id"]["videoId"] for v in videos if "id" in v and "videoId" in v["id"]]
-            channel_ids = [v["snippet"]["channelId"] for v in videos if "snippet" in v and "channelId" in v["snippet"]]
+            video_ids = [video["id"]["videoId"] for video in videos if "id" in video and "videoId" in video["id"]]
+            channel_ids = [video["snippet"]["channelId"] for video in videos]
 
             if not video_ids or not channel_ids:
                 continue
 
-            # Video Stats
-            stats_params = {"part": "statistics,contentDetails", "id": ",".join(video_ids), "key": API_KEY}
-            stats_response = requests.get(YOUTUBE_VIDEO_URL, params=stats_params).json()
+            # Video statistics
+            stats_params = {"part": "statistics,snippet", "id": ",".join(video_ids), "key": API_KEY}
+            stats_response = requests.get(YOUTUBE_VIDEO_URL, params=stats_params)
+            stats_data = stats_response.json()
 
-            # Channel Stats
+            # Channel statistics
             channel_params = {"part": "statistics", "id": ",".join(channel_ids), "key": API_KEY}
-            channel_response = requests.get(YOUTUBE_CHANNEL_URL, params=channel_params).json()
+            channel_response = requests.get(YOUTUBE_CHANNEL_URL, params=channel_params)
+            channel_data = channel_response.json()
 
-            if "items" not in stats_response or "items" not in channel_response:
+            if "items" not in stats_data or "items" not in channel_data:
                 continue
 
-            stats = stats_response["items"]
-            channels = channel_response["items"]
+            stats = stats_data["items"]
+            channels = channel_data["items"]
 
-            for video, stat, channel in zip(videos, stats, channels):
-                title = video["snippet"].get("title", "N/A")
-                description = video["snippet"].get("description", "")[:200]
-                video_url = f"https://www.youtube.com/watch?v={video['id']['videoId']}"
+            # Channel subscribers lookup
+            channel_lookup = {c["id"]: int(c["statistics"].get("subscriberCount", 0)) for c in channels}
+
+            # Collect Results
+            for stat in stats:
+                video_id = stat["id"]
+                snippet = stat["snippet"]
+                channel_id = snippet["channelId"]
+                title = snippet.get("title", "N/A")
+                description = snippet.get("description", "")[:200]
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
+
                 views = int(stat["statistics"].get("viewCount", 0))
-                subs = int(channel["statistics"].get("subscriberCount", 0))
+                subs = channel_lookup.get(channel_id, 0)
 
-                # Shorts vs Long filter
-                duration = stat["contentDetails"].get("duration", "")
-                is_short = "PT" in duration and "M" not in duration and "H" not in duration
-
-                if video_type == "Shorts (<60s)" and not is_short:
-                    continue
-                if video_type == "Long (60s+)" and is_short:
-                    continue
-
-                # Minimum views filter
-                if views < min_views:
-                    continue
-
-                # Subscriber filter
-                if subs < 3000:
+                if subs < 3000:  # Only include small creators
                     all_results.append({
+                        "Keyword": keyword,
                         "Title": title,
                         "Description": description,
                         "URL": video_url,
@@ -113,15 +115,12 @@ if st.button("Fetch Data"):
 
         # Display results
         if all_results:
-            st.success(f"Found {len(all_results)} results!")
+            st.success(f"Found {len(all_results)} results across all keywords!")
             df = pd.DataFrame(all_results)
             st.dataframe(df)
-
-            # CSV Download
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button("Download Results as CSV", csv, "youtube_results.csv", "text/csv")
+            st.download_button("Download CSV", df.to_csv(index=False), "viral_topics.csv", "text/csv")
         else:
-            st.warning("No results matched your filters.")
+            st.warning("No results found for your filters. Try increasing days.")
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"An error occurred: {e}")
